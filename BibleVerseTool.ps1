@@ -129,6 +129,38 @@ function savedverses {
     }
 }
 
+function Read-BibleInput {
+    # Reads keys one at a time so Up/Down arrow can act immediately (no Enter
+    # needed), while any typed text is still collected until Enter is pressed.
+    # Falls back to plain Read-Host if the console doesn't support raw key reads.
+    try {
+        $buffer = ""
+        while ($true) {
+            $keyInfo = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            switch ($keyInfo.VirtualKeyCode) {
+                38 { if (-not $buffer) { return @{ Action = "ScrollUp" } } }   # Up arrow
+                40 { if (-not $buffer) { return @{ Action = "ScrollDown" } } } # Down arrow
+                13 { Write-Host ""; return @{ Action = "Submit"; Text = $buffer } } # Enter
+                8  {
+                    if ($buffer.Length -gt 0) {
+                        $buffer = $buffer.Substring(0, $buffer.Length - 1)
+                        Write-Host "`b `b" -NoNewline
+                    }
+                }
+                default {
+                    $ch = $keyInfo.Character
+                    if ($ch -and [int]$ch -ge 32 -and [int]$ch -ne 127) {
+                        $buffer += $ch
+                        Write-Host $ch -NoNewline
+                    }
+                }
+            }
+        }
+    } catch {
+        return @{ Action = "Submit"; Text = (Read-Host) }
+    }
+}
+
 function bible {
     param(
         [Parameter(ValueFromRemainingArguments = $true)]
@@ -184,44 +216,57 @@ function bible {
         $options += "[S]ave verse"
         $options += "[Q]uit"
         Write-Host ($options -join "   ") -ForegroundColor Green
-        Write-Host "Or type another reference to jump there, e.g. John 4" -ForegroundColor DarkGray
+        Write-Host "Up/Down arrow = scroll one verse   |   type another reference to jump there, e.g. John 4" -ForegroundColor DarkGray
 
-        $choice = Read-Host ">"
-        $trimmed = $choice.Trim()
-        switch ($trimmed.ToUpper()) {
-            "N" {
-                if ($hasNext) { $index += $pageSize }
+        Write-Host ">" -NoNewline -ForegroundColor Green
+        Write-Host " " -NoNewline
+        $input = Read-BibleInput
+
+        switch ($input.Action) {
+            "ScrollDown" {
+                if ($index -lt ($verses.Count - 1)) { $index++ }
             }
-            "P" {
-                if ($hasPrev) { $index = [Math]::Max(0, $index - $pageSize) }
+            "ScrollUp" {
+                if ($index -gt 0) { $index-- }
             }
-            "S" {
-                $verseNum = Read-Host "Enter verse number to save"
-                $match = $verses | Where-Object { $_.ref -match ":$verseNum(-\d+)?$" } | Select-Object -First 1
-                if ($match) {
-                    Save-LsmVerse -VerseObj $match
-                } else {
-                    Write-Host "Verse $verseNum not found on this chapter." -ForegroundColor Red
-                }
-                Read-Host "Press Enter to continue" | Out-Null
-            }
-            "Q" {
-                return
-            }
-            "" {
-                # empty input, just redraw
-            }
-            default {
-                # anything else is treated as a new "Book Chapter" reference to jump to
-                $newResult = Invoke-LsmApi -Reference $trimmed
-                if ($newResult -and $newResult.verses -and $newResult.verses.Count -gt 0) {
-                    $result     = $newResult
-                    $verses     = @($newResult.verses)
-                    $chapterRef = $trimmed
-                    $index      = 0
-                } else {
-                    Write-Host "Could not find '$trimmed' - try a format like 'John 4'." -ForegroundColor Red
-                    Read-Host "Press Enter to continue" | Out-Null
+            "Submit" {
+                $trimmed = $input.Text.Trim()
+                switch ($trimmed.ToUpper()) {
+                    "N" {
+                        if ($hasNext) { $index += $pageSize }
+                    }
+                    "P" {
+                        if ($hasPrev) { $index = [Math]::Max(0, $index - $pageSize) }
+                    }
+                    "S" {
+                        $verseNum = Read-Host "Enter verse number to save"
+                        $match = $verses | Where-Object { $_.ref -match ":$verseNum(-\d+)?$" } | Select-Object -First 1
+                        if ($match) {
+                            Save-LsmVerse -VerseObj $match
+                        } else {
+                            Write-Host "Verse $verseNum not found on this chapter." -ForegroundColor Red
+                        }
+                        Read-Host "Press Enter to continue" | Out-Null
+                    }
+                    "Q" {
+                        return
+                    }
+                    "" {
+                        # empty input, just redraw
+                    }
+                    default {
+                        # anything else is treated as a new "Book Chapter" reference to jump to
+                        $newResult = Invoke-LsmApi -Reference $trimmed
+                        if ($newResult -and $newResult.verses -and $newResult.verses.Count -gt 0) {
+                            $result     = $newResult
+                            $verses     = @($newResult.verses)
+                            $chapterRef = $trimmed
+                            $index      = 0
+                        } else {
+                            Write-Host "Could not find '$trimmed' - try a format like 'John 4'." -ForegroundColor Red
+                            Read-Host "Press Enter to continue" | Out-Null
+                        }
+                    }
                 }
             }
         }

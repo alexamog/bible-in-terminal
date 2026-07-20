@@ -25,11 +25,16 @@ verses with:
 [N]ext page   [P]revious page   [S]ave verse   [Q]uit
 ```
 
-- **N** / **P** move forward/back a page.
+- **N** / **P** move forward/back a whole page.
+- **Up / Down arrow keys** scroll one verse at a time, immediately - no need
+  to press Enter. This is the one to use when your terminal window is small
+  and a full page jump feels too coarse.
 - **S** asks for a verse number and saves that verse (reference + text) to
   `%USERPROFILE%\.lsm-saved-verses.json`. View them anytime with
   `savedverses`.
 - **Q** exits back to your normal prompt.
+- Typing anything else and pressing Enter jumps straight to that chapter
+  (e.g. type `John 4` and hit Enter).
 
 Tip: this reader is much nicer in a **tall, narrow terminal pane** - split
 your terminal vertically before running `bible`.
