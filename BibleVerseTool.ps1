@@ -94,20 +94,26 @@ function verse {
 }
 
 function Save-LsmVerse {
-    param($VerseObj)
+    # Stores only the reference, never the verse text - api.lsm.org's terms
+    # of service prohibit storing any amount of the Recovery Version text for
+    # offline use. The text is re-fetched live every time savedverses runs.
+    param([string]$Reference)
 
     $storePath = Join-Path $HOME ".lsm-saved-verses.json"
     $saved = @()
     if (Test-Path $storePath) {
         try { $saved = @(Get-Content $storePath -Raw | ConvertFrom-Json) } catch { $saved = @() }
     }
+    if ($saved | Where-Object { $_.ref -eq $Reference }) {
+        Write-Host "Already saved: $Reference" -ForegroundColor Yellow
+        return
+    }
     $saved += [PSCustomObject]@{
-        ref     = $VerseObj.ref
-        text    = $VerseObj.text
+        ref     = $Reference
         savedAt = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
     }
     $saved | ConvertTo-Json -Depth 5 | Set-Content -Path $storePath -Encoding utf8
-    Write-Host "Saved $($VerseObj.ref)" -ForegroundColor Green
+    Write-Host "Saved $Reference" -ForegroundColor Green
 }
 
 function savedverses {
@@ -121,11 +127,25 @@ function savedverses {
         Write-Host "No saved verses yet." -ForegroundColor Yellow
         return
     }
+
+    $copyright = $null
     foreach ($v in $saved) {
+        $result = Invoke-LsmApi -Reference $v.ref
         Write-Host ""
         Write-Host $v.ref -ForegroundColor Cyan
-        Write-Host $v.text
+        if ($result -and $result.verses -and $result.verses.Count -gt 0) {
+            foreach ($verseObj in $result.verses) {
+                Write-Host $verseObj.text
+            }
+            if ($result.copyright) { $copyright = $result.copyright }
+        } else {
+            Write-Host "(could not fetch text right now)" -ForegroundColor Red
+        }
         Write-Host "  saved $($v.savedAt)" -ForegroundColor DarkGray
+    }
+    if ($copyright) {
+        Write-Host ""
+        Write-Host $copyright -ForegroundColor DarkGray
     }
 }
 
@@ -306,7 +326,7 @@ function bible {
                         $verseNum = Read-Host "Enter verse number to save"
                         $match = $verses | Where-Object { $_.ref -match ":$verseNum(-\d+)?$" } | Select-Object -First 1
                         if ($match) {
-                            Save-LsmVerse -VerseObj $match
+                            Save-LsmVerse -Reference $match.ref
                         } else {
                             Write-Host "Verse $verseNum not found on this chapter." -ForegroundColor Red
                         }

@@ -34,9 +34,9 @@ verses with:
 - **Up / Down arrow keys** scroll one verse at a time, immediately - no need
   to press Enter. This is the one to use when your terminal window is small
   and a full page jump feels too coarse.
-- **S** asks for a verse number and saves that verse (reference + text) to
-  `%USERPROFILE%\.lsm-saved-verses.json`. View them anytime with
-  `savedverses`.
+- **S** asks for a verse number and saves that *reference* (e.g. "John 3:16")
+  to `%USERPROFILE%\.lsm-saved-verses.json`. Run `savedverses` anytime to
+  fetch and display the text for everything you've saved.
 - **Q** exits back to your normal prompt.
 - Typing anything else and pressing Enter jumps straight to that chapter
   (e.g. type `John 4` and hit Enter).
@@ -88,4 +88,14 @@ your terminal vertically before running `bible`.
 | File | Purpose |
 |---|---|
 | `%USERPROFILE%\.lsm-verse.json` | Your API credentials. **Never share this file or commit it anywhere.** |
-| `%USERPROFILE%\.lsm-saved-verses.json` | Verses you've saved with the `[S]ave` option. Plain JSON, safe to open and edit by hand. |
+| `%USERPROFILE%\.lsm-saved-verses.json` | References (not verse text) you've saved with the `[S]ave` option. Plain JSON, safe to open and edit by hand. |
+
+## A note on the API's terms of service
+
+api.lsm.org's terms prohibit storing the Recovery Version text offline, and
+require the `copyright` attribution to be shown wherever verses are
+displayed. This tool follows both: `savedverses` only ever stores the
+*reference* on disk and re-fetches the actual text live from the API each
+time you run it, and every command that displays verse text also displays
+the attribution line. Clipboard copies (from `verse`) are a transient,
+in-memory convenience rather than a stored file.
