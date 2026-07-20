@@ -8,6 +8,11 @@ It talks to the free `txo.php` API at `api.lsm.org`. You need your own
 `appid` and `token` from [api.lsm.org](https://api.lsm.org) - registration is
 free.
 
+## Want a free study Bible?
+
+- Canada: [biblesforcanada.org/order](https://www.biblesforcanada.org/order)
+- USA: [biblesforamerica.org/place-order](https://biblesforamerica.org/place-order)
+
 ## Commands
 
 | Command | What it does |
