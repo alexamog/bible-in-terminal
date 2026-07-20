@@ -161,6 +161,49 @@ function Read-BibleInput {
     }
 }
 
+function Get-BibleWrappedLines {
+    # Word-wraps $Text to fit ($Width - $PrefixLength) characters per line.
+    # Returns an array of lines (always at least one, even for empty text).
+    param([string]$Text, [int]$PrefixLength, [int]$Width)
+
+    $maxLineWidth = [Math]::Max(10, $Width - $PrefixLength - 1)
+    $words = $Text -split '\s+'
+    $lines = @()
+    $current = ""
+    foreach ($w in $words) {
+        if ($current.Length -eq 0) {
+            $current = $w
+        } elseif (($current.Length + 1 + $w.Length) -le $maxLineWidth) {
+            $current += " $w"
+        } else {
+            $lines += $current
+            $current = $w
+        }
+    }
+    if ($current) { $lines += $current }
+    if ($lines.Count -eq 0) { $lines = @("") }
+    return $lines
+}
+
+function Write-BibleVerseLine {
+    # Prints a verse with its number, wrapping long text with a hanging
+    # indent so continuation lines line up under the verse text, not the number.
+    param([string]$Number, [string]$Text, [int]$Width)
+
+    $prefix = "{0,3}  " -f $Number
+    $indent = " " * $prefix.Length
+    $lines  = @(Get-BibleWrappedLines -Text $Text -PrefixLength $prefix.Length -Width $Width)
+
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($i -eq 0) {
+            Write-Host $prefix -ForegroundColor Yellow -NoNewline
+        } else {
+            Write-Host $indent -NoNewline
+        }
+        Write-Host $lines[$i]
+    }
+}
+
 function bible {
     param(
         [Parameter(ValueFromRemainingArguments = $true)]
@@ -184,26 +227,39 @@ function bible {
 
     $verses = @($result.verses)
 
-    try {
-        $pageSize = [Math]::Max(3, $Host.UI.RawUI.WindowSize.Height - 8)
-    } catch {
-        $pageSize = 10
-    }
-
     $index = 0
+    $pageHistory = New-Object System.Collections.Generic.List[int]
     while ($true) {
         Clear-Host
         Write-Host "== $chapterRef ==" -ForegroundColor Cyan
         Write-Host ""
 
-        $pageEnd = [Math]::Min($index + $pageSize, $verses.Count) - 1
-        for ($i = $index; $i -le $pageEnd; $i++) {
-            $num = if ($verses[$i].ref -match ':(\d+)') { $matches[1] } else { $i + 1 }
-            Write-Host "$num  " -ForegroundColor DarkYellow -NoNewline
-            Write-Host $verses[$i].text
+        try {
+            $termWidth  = $Host.UI.RawUI.WindowSize.Width
+            $termHeight = $Host.UI.RawUI.WindowSize.Height
+        } catch {
+            $termWidth  = 80
+            $termHeight = 25
+        }
+        $availableLines = [Math]::Max(3, $termHeight - 9)
+
+        # Figure out how many verses fit, counting wrapped lines + a spacer
+        # line per verse, so a page never overflows a small/narrow window.
+        $pageEnd   = $index
+        $linesUsed = 0
+        for ($i = $index; $i -lt $verses.Count; $i++) {
+            $need = (Get-BibleWrappedLines -Text $verses[$i].text -PrefixLength 5 -Width $termWidth).Count + 1
+            if (($linesUsed + $need) -gt $availableLines -and $i -gt $index) { break }
+            $linesUsed += $need
+            $pageEnd = $i
         }
 
-        Write-Host ""
+        for ($i = $index; $i -le $pageEnd; $i++) {
+            $num = if ($verses[$i].ref -match ':(\d+)') { $matches[1] } else { $i + 1 }
+            Write-BibleVerseLine -Number $num -Text $verses[$i].text -Width $termWidth
+            Write-Host ""
+        }
+
         Write-Host ("Verses {0}-{1} of {2}" -f ($index + 1), ($pageEnd + 1), $verses.Count) -ForegroundColor DarkGray
         if ($result.copyright) { Write-Host $result.copyright -ForegroundColor DarkGray }
         Write-Host ""
@@ -233,10 +289,18 @@ function bible {
                 $trimmed = $input.Text.Trim()
                 switch ($trimmed.ToUpper()) {
                     "N" {
-                        if ($hasNext) { $index += $pageSize }
+                        if ($hasNext) {
+                            $pageHistory.Add($index)
+                            $index = $pageEnd + 1
+                        }
                     }
                     "P" {
-                        if ($hasPrev) { $index = [Math]::Max(0, $index - $pageSize) }
+                        if ($pageHistory.Count -gt 0) {
+                            $index = $pageHistory[$pageHistory.Count - 1]
+                            $pageHistory.RemoveAt($pageHistory.Count - 1)
+                        } elseif ($hasPrev) {
+                            $index = 0
+                        }
                     }
                     "S" {
                         $verseNum = Read-Host "Enter verse number to save"
@@ -262,6 +326,7 @@ function bible {
                             $verses     = @($newResult.verses)
                             $chapterRef = $trimmed
                             $index      = 0
+                            $pageHistory.Clear()
                         } else {
                             Write-Host "Could not find '$trimmed' - try a format like 'John 4'." -ForegroundColor Red
                             Read-Host "Press Enter to continue" | Out-Null

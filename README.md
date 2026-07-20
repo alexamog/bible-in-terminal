@@ -41,6 +41,11 @@ verses with:
 - Typing anything else and pressing Enter jumps straight to that chapter
   (e.g. type `John 4` and hit Enter).
 
+Long verses wrap with a hanging indent so continuation lines line up under
+the verse text (not the number), with a blank line between verses. The page
+size adapts to your window's actual width and height, so it never overflows
+even in a small or narrow pane.
+
 Tip: this reader is much nicer in a **tall, narrow terminal pane** - split
 your terminal vertically before running `bible`.
 
