@@ -1,0 +1,229 @@
+# ============================================================
+# Bible lookup commands (Recovery Version text, api.lsm.org)
+#
+#   verse <reference>        e.g.  verse John 3:16
+#   bible <book> <chapter>   e.g.  bible John 3        (paged chapter reader)
+#   savedverses              list verses you've saved from the chapter reader
+#
+# Credentials live in:  %USERPROFILE%\.lsm-verse.json
+#   { "appid": "YOUR_APPID", "token": "YOUR_TOKEN" }
+# Register at https://api.lsm.org to get an appid + token.
+#
+# Saved verses are stored in: %USERPROFILE%\.lsm-saved-verses.json
+# ============================================================
+
+function Get-LsmCredential {
+    $configPath = Join-Path $HOME ".lsm-verse.json"
+    if (-not (Test-Path $configPath)) {
+        Write-Host "Credentials file not found: $configPath" -ForegroundColor Yellow
+        Write-Host 'Create it containing:  { "appid": "YOUR_APPID", "token": "YOUR_TOKEN" }'
+        return $null
+    }
+    try {
+        $config = Get-Content $configPath -Raw | ConvertFrom-Json
+    } catch {
+        Write-Host "Could not read $configPath - is it valid JSON?" -ForegroundColor Red
+        return $null
+    }
+    if (-not $config.appid -or -not $config.token -or
+        $config.appid -like "YOUR_*" -or $config.token -like "YOUR_*") {
+        Write-Host "Please open $configPath and fill in your real appid and token from api.lsm.org" -ForegroundColor Yellow
+        return $null
+    }
+    return $config
+}
+
+function Invoke-LsmApi {
+    param([Parameter(Mandatory)][string]$Reference)
+
+    $config = Get-LsmCredential
+    if (-not $config) { return $null }
+
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+    $url = "https://api.lsm.org/recver/txo.php?String={0}&Out=json&appid={1}&token={2}" -f
+        [uri]::EscapeDataString("'$Reference'"),
+        [uri]::EscapeDataString($config.appid),
+        [uri]::EscapeDataString($config.token)
+
+    $authBytes  = [Text.Encoding]::ASCII.GetBytes("$($config.appid):$($config.token)")
+    $authHeader = @{ Authorization = "Basic " + [Convert]::ToBase64String($authBytes) }
+
+    try {
+        return Invoke-RestMethod -Uri $url -Headers $authHeader -TimeoutSec 15
+    } catch {
+        Write-Host "Request failed: $($_.Exception.Message)" -ForegroundColor Red
+        return $null
+    }
+}
+
+function verse {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Reference
+    )
+
+    if (-not $Reference -or $Reference.Count -eq 0) {
+        Write-Host "Usage: verse <reference>    e.g.  verse John 3:16" -ForegroundColor Yellow
+        return
+    }
+
+    $result = Invoke-LsmApi -Reference ($Reference -join " ")
+    if (-not $result) { return }
+
+    if ($result.message) {
+        Write-Host $result.message -ForegroundColor Yellow
+    }
+    $clipLines = @()
+    foreach ($v in $result.verses) {
+        Write-Host ""
+        Write-Host $v.ref -ForegroundColor Cyan
+        Write-Host $v.text
+        $clipLines += "$($v.ref) - $($v.text)"
+    }
+    if ($result.copyright) {
+        Write-Host ""
+        Write-Host $result.copyright -ForegroundColor DarkGray
+    }
+
+    if ($clipLines.Count -gt 0) {
+        $clipLines -join "`r`n`r`n" | Set-Clipboard
+        Write-Host ""
+        Write-Host "(copied to clipboard)" -ForegroundColor DarkGray
+    }
+}
+
+function Save-LsmVerse {
+    param($VerseObj)
+
+    $storePath = Join-Path $HOME ".lsm-saved-verses.json"
+    $saved = @()
+    if (Test-Path $storePath) {
+        try { $saved = @(Get-Content $storePath -Raw | ConvertFrom-Json) } catch { $saved = @() }
+    }
+    $saved += [PSCustomObject]@{
+        ref     = $VerseObj.ref
+        text    = $VerseObj.text
+        savedAt = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+    }
+    $saved | ConvertTo-Json -Depth 5 | Set-Content -Path $storePath -Encoding utf8
+    Write-Host "Saved $($VerseObj.ref)" -ForegroundColor Green
+}
+
+function savedverses {
+    $storePath = Join-Path $HOME ".lsm-saved-verses.json"
+    if (-not (Test-Path $storePath)) {
+        Write-Host "No saved verses yet." -ForegroundColor Yellow
+        return
+    }
+    $saved = @(Get-Content $storePath -Raw | ConvertFrom-Json)
+    if ($saved.Count -eq 0) {
+        Write-Host "No saved verses yet." -ForegroundColor Yellow
+        return
+    }
+    foreach ($v in $saved) {
+        Write-Host ""
+        Write-Host $v.ref -ForegroundColor Cyan
+        Write-Host $v.text
+        Write-Host "  saved $($v.savedAt)" -ForegroundColor DarkGray
+    }
+}
+
+function bible {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Args
+    )
+
+    if (-not $Args -or $Args.Count -lt 2) {
+        Write-Host "Usage: bible <book> <chapter>    e.g.  bible John 3" -ForegroundColor Yellow
+        return
+    }
+
+    $chapterRef = $Args -join " "
+    $result = Invoke-LsmApi -Reference $chapterRef
+    if (-not $result) { return }
+
+    if (-not $result.verses -or $result.verses.Count -eq 0) {
+        if ($result.message) { Write-Host $result.message -ForegroundColor Yellow }
+        else { Write-Host "No verses returned for '$chapterRef'." -ForegroundColor Yellow }
+        return
+    }
+
+    $verses = @($result.verses)
+
+    try {
+        $pageSize = [Math]::Max(3, $Host.UI.RawUI.WindowSize.Height - 8)
+    } catch {
+        $pageSize = 10
+    }
+
+    $index = 0
+    while ($true) {
+        Clear-Host
+        Write-Host "== $chapterRef ==" -ForegroundColor Cyan
+        Write-Host ""
+
+        $pageEnd = [Math]::Min($index + $pageSize, $verses.Count) - 1
+        for ($i = $index; $i -le $pageEnd; $i++) {
+            $num = if ($verses[$i].ref -match ':(\d+)') { $matches[1] } else { $i + 1 }
+            Write-Host "$num  " -ForegroundColor DarkYellow -NoNewline
+            Write-Host $verses[$i].text
+        }
+
+        Write-Host ""
+        Write-Host ("Verses {0}-{1} of {2}" -f ($index + 1), ($pageEnd + 1), $verses.Count) -ForegroundColor DarkGray
+        if ($result.copyright) { Write-Host $result.copyright -ForegroundColor DarkGray }
+        Write-Host ""
+
+        $hasNext = ($pageEnd + 1) -lt $verses.Count
+        $hasPrev = $index -gt 0
+        $options = @()
+        if ($hasNext) { $options += "[N]ext page" }
+        if ($hasPrev) { $options += "[P]revious page" }
+        $options += "[S]ave verse"
+        $options += "[Q]uit"
+        Write-Host ($options -join "   ") -ForegroundColor Green
+        Write-Host "Or type another reference to jump there, e.g. John 4" -ForegroundColor DarkGray
+
+        $choice = Read-Host ">"
+        $trimmed = $choice.Trim()
+        switch ($trimmed.ToUpper()) {
+            "N" {
+                if ($hasNext) { $index += $pageSize }
+            }
+            "P" {
+                if ($hasPrev) { $index = [Math]::Max(0, $index - $pageSize) }
+            }
+            "S" {
+                $verseNum = Read-Host "Enter verse number to save"
+                $match = $verses | Where-Object { $_.ref -match ":$verseNum(-\d+)?$" } | Select-Object -First 1
+                if ($match) {
+                    Save-LsmVerse -VerseObj $match
+                } else {
+                    Write-Host "Verse $verseNum not found on this chapter." -ForegroundColor Red
+                }
+                Read-Host "Press Enter to continue" | Out-Null
+            }
+            "Q" {
+                return
+            }
+            "" {
+                # empty input, just redraw
+            }
+            default {
+                # anything else is treated as a new "Book Chapter" reference to jump to
+                $newResult = Invoke-LsmApi -Reference $trimmed
+                if ($newResult -and $newResult.verses -and $newResult.verses.Count -gt 0) {
+                    $result     = $newResult
+                    $verses     = @($newResult.verses)
+                    $chapterRef = $trimmed
+                    $index      = 0
+                } else {
+                    Write-Host "Could not find '$trimmed' - try a format like 'John 4'." -ForegroundColor Red
+                    Read-Host "Press Enter to continue" | Out-Null
+                }
+            }
+        }
+    }
+}
