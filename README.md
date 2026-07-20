@@ -84,19 +84,3 @@ your terminal vertically before running `bible`.
 |---|---|
 | `%USERPROFILE%\.lsm-verse.json` | Your API credentials. **Never share this file or commit it anywhere.** |
 | `%USERPROFILE%\.lsm-saved-verses.json` | Verses you've saved with the `[S]ave` option. Plain JSON, safe to open and edit by hand. |
-
-## Troubleshooting
-
-| Symptom | Cause / fix |
-|---|---|
-| "Credentials file not found" | Run `Install.ps1` again, or create `.lsm-verse.json` by hand (see above). |
-| "Please open ... and fill in your real appid and token" | The credentials file still has the placeholder values - edit it. |
-| "Request failed: ..." | Usually no internet connection, or the appid/token is wrong/expired. |
-| `verse` / `bible` "is not recognized" | Your profile didn't load - reopen PowerShell, or check `$PROFILE` actually dot-sources `BibleVerseTool.ps1`. |
-
-## Want to understand how it works, or build something like it yourself?
-
-See **`Lab - Building the Bible Verse Lookup Tool.pdf`** in this folder. It's
-a beginner-friendly, hands-on lab that walks through building this exact tool
-from scratch - functions, calling a REST API, reading JSON, a save-to-file
-pattern, and a simple paging loop - no prior PowerShell experience assumed.
