@@ -36,8 +36,20 @@ if (-not (Test-Path $PROFILE)) {
 $dotSourceLine = '. "$PSScriptRoot\BibleVerseTool.ps1"'
 $profileText   = Get-Content $PROFILE -Raw -ErrorAction SilentlyContinue
 if ($profileText -notmatch [regex]::Escape("BibleVerseTool.ps1")) {
-    Add-Content -Path $PROFILE -Value "`n# Bible Verse Lookup Tool`n$dotSourceLine`n"
-    Write-Host "Added dot-source line to your profile: $PROFILE" -ForegroundColor Green
+    try {
+        Add-Content -Path $PROFILE -Value "`n# Bible Verse Lookup Tool`n$dotSourceLine`n" -ErrorAction Stop
+    } catch {
+        Write-Host "Could not write to $PROFILE : $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Add this line to it yourself:  $dotSourceLine" -ForegroundColor Yellow
+    }
+
+    $verifyText = Get-Content $PROFILE -Raw -ErrorAction SilentlyContinue
+    if ($verifyText -match [regex]::Escape("BibleVerseTool.ps1")) {
+        Write-Host "Added dot-source line to your profile: $PROFILE" -ForegroundColor Green
+    } else {
+        Write-Host "Profile still doesn't reference BibleVerseTool.ps1 after writing - something (maybe OneDrive sync) blocked the update." -ForegroundColor Red
+        Write-Host "Open $PROFILE yourself and add this line:  $dotSourceLine" -ForegroundColor Yellow
+    }
 } else {
     Write-Host "Profile already references BibleVerseTool.ps1 - left untouched." -ForegroundColor Yellow
 }
@@ -48,6 +60,23 @@ if (-not (Test-Path $credPath)) {
     Write-Host "Created $credPath - open it and paste in your real appid/token." -ForegroundColor Yellow
 } else {
     Write-Host "Credentials file already exists at $credPath - left untouched." -ForegroundColor Yellow
+}
+
+# The example file is tracked by git. If real credentials get typed into it by
+# mistake instead of into $credPath, they are one "git push" away from being
+# public - so say so loudly rather than letting it slide.
+$examplePath = Join-Path $here ".lsm-verse.example.json"
+try {
+    $example = Get-Content $examplePath -Raw -ErrorAction Stop | ConvertFrom-Json
+    if (($example.appid -and $example.appid -notlike "YOUR_*") -or
+        ($example.token -and $example.token -notlike "YOUR_*")) {
+        Write-Host ""
+        Write-Host "WARNING: $examplePath appears to contain real credentials." -ForegroundColor Red
+        Write-Host "That file is tracked by git - committing it would publish your token." -ForegroundColor Red
+        Write-Host "Move them into $credPath and reset the example back to YOUR_APPID / YOUR_TOKEN." -ForegroundColor Yellow
+    }
+} catch {
+    # Example file missing or unparseable - nothing to warn about.
 }
 
 Write-Host ""

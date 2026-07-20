@@ -1,0 +1,5 @@
+# Real API credentials - never commit these.
+.lsm-verse.json
+
+# Saved verse references (personal, and written to your home directory).
+.lsm-saved-verses.json

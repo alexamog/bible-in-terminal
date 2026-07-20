@@ -50,7 +50,14 @@ function Invoke-LsmApi {
     $authHeader = @{ Authorization = "Basic " + [Convert]::ToBase64String($authBytes) }
 
     try {
-        return Invoke-RestMethod -Uri $url -Headers $authHeader -TimeoutSec 15
+        # Decode the response as UTF-8 explicitly. Invoke-RestMethod on Windows
+        # PowerShell 5.1 falls back to Latin-1 when the response has no charset,
+        # which mangles the (c) in the copyright attribution into "A(c)".
+        # -UseBasicParsing keeps 5.1 from invoking the Internet Explorer engine,
+        # which fails outright on machines where IE was never configured.
+        $response = Invoke-WebRequest -Uri $url -Headers $authHeader -TimeoutSec 15 -UseBasicParsing
+        $json     = [Text.Encoding]::UTF8.GetString($response.RawContentStream.ToArray())
+        return $json | ConvertFrom-Json
     } catch {
         Write-Host "Request failed: $($_.Exception.Message)" -ForegroundColor Red
         return $null
