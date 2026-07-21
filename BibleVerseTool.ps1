@@ -56,7 +56,13 @@ function Invoke-LsmApi {
     $authHeader = @{ Authorization = "Basic " + [Convert]::ToBase64String($authBytes) }
 
     try {
-        return Invoke-RestMethod -Uri $url -Headers $authHeader -TimeoutSec 15
+        # This API replies "Content-Type: application/json" with no charset,
+        # so PowerShell 5.1's Invoke-RestMethod assumes Latin-1 and turns the
+        # UTF-8 copyright sign into "Â©". Read the raw bytes and decode as
+        # UTF-8 ourselves instead.
+        $resp = Invoke-WebRequest -Uri $url -Headers $authHeader -TimeoutSec 15 -UseBasicParsing
+        $json = [Text.Encoding]::UTF8.GetString($resp.RawContentStream.ToArray())
+        return ($json | ConvertFrom-Json)
     } catch {
         Write-Host "Request failed: $($_.Exception.Message)" -ForegroundColor Red
         return $null
@@ -203,7 +209,8 @@ function verse {
     foreach ($v in $result.verses) {
         Write-Host ""
         Write-Host $v.ref -ForegroundColor Cyan
-        Write-Host $v.text
+        Write-BibleText -Text $v.text -Width 0
+        # Clipboard keeps the original brackets - plain text, no escape codes.
         $clipLines += "$($v.ref) - $($v.text)"
     }
     if ($result.copyright) {
@@ -396,7 +403,7 @@ function savedverses {
         Write-Host $v.ref -ForegroundColor Cyan
         if ($result -and $result.verses -and $result.verses.Count -gt 0) {
             foreach ($verseObj in $result.verses) {
-                Write-Host $verseObj.text
+                Write-BibleText -Text $verseObj.text -Width 0
             }
             if ($result.copyright) { $copyright = $result.copyright }
         } else {
@@ -437,6 +444,10 @@ function Read-BibleInput {
                     if ($buffer.Length -gt 0) {
                         $buffer = $buffer.Substring(0, $buffer.Length - 1)
                         Write-Host "`b `b" -NoNewline
+                    } else {
+                        # Nothing typed: Backspace means "go back to where I
+                        # was reading before I jumped".
+                        return @{ Action = "Back" }
                     }
                 }
                 default {
@@ -496,23 +507,98 @@ function Get-BibleWrappedLines {
     return $lines
 }
 
+function Split-BibleEmphasis {
+    # The Recovery Version brackets words supplied by the translators - e.g.
+    # "[He] [said,]" - which print in italics on paper. Split the text into
+    # words, each flagged as emphasised or not, so the brackets themselves
+    # never have to be shown.
+    param([string]$Text)
+
+    $tokens = @()
+    foreach ($m in [regex]::Matches($Text, '\[[^\]]*\]|[^\[\]]+')) {
+        $seg  = $m.Value
+        $emph = $seg.StartsWith('[')
+        $body = if ($emph) { $seg.Trim('[', ']') } else { $seg }
+        foreach ($w in ($body -split '\s+')) {
+            if ($w -ne '') {
+                $tokens += [PSCustomObject]@{ Text = $w; Emph = $emph }
+            }
+        }
+    }
+    return @($tokens)
+}
+
+function Write-BibleText {
+    # Word-wraps on VISIBLE width (styling is applied at print time, never
+    # baked into the string - ANSI codes would otherwise be counted as
+    # characters and wreck the wrapping).
+    param(
+        [string]$Text,
+        [string]$Prefix       = "",
+        [string]$PrefixColor  = "Yellow",
+        [int]   $Width
+    )
+
+    if ($Width -le 0) {
+        try { $Width = $Host.UI.RawUI.WindowSize.Width } catch { $Width = 80 }
+    }
+
+    $esc      = [char]27
+    $italicOn = "$esc[3m"
+    $italicOff= "$esc[23m"
+
+    $indent = " " * $Prefix.Length
+    $max    = [Math]::Max(10, $Width - $Prefix.Length - 1)
+    $tokens = Split-BibleEmphasis -Text $Text
+
+    $line   = @()   # tokens on the current line
+    $len    = 0
+    $first  = $true
+
+    $flush = {
+        if ($first) {
+            if ($Prefix) { Write-Host $Prefix -ForegroundColor $PrefixColor -NoNewline }
+        } else {
+            Write-Host $indent -NoNewline
+        }
+        # Build the line as one string, opening/closing italics only when the
+        # emphasis actually changes, so "[a period of]" is a single run.
+        $sb   = ""
+        $open = $false
+        for ($j = 0; $j -lt $line.Count; $j++) {
+            # Close italics before the separating space, open them after it,
+            # so the styling hugs the words instead of the gap.
+            if (-not $line[$j].Emph -and $open) { $sb += $italicOff; $open = $false }
+            if ($j -gt 0) { $sb += " " }
+            if ($line[$j].Emph -and -not $open) { $sb += $italicOn; $open = $true }
+            $sb += $line[$j].Text
+        }
+        if ($open) { $sb += $italicOff }   # never leave italics on at line end
+        Write-Host $sb
+    }
+
+    foreach ($t in $tokens) {
+        $add = if ($len -eq 0) { $t.Text.Length } else { $t.Text.Length + 1 }
+        if ($len -gt 0 -and ($len + $add) -gt $max) {
+            & $flush
+            $first = $false
+            $line  = @()
+            $len   = 0
+            $add   = $t.Text.Length
+        }
+        $line += $t
+        $len  += $add
+    }
+    if ($line.Count -gt 0) { & $flush }
+    elseif ($first -and $Prefix) { Write-Host $Prefix -ForegroundColor $PrefixColor }
+}
+
 function Write-BibleVerseLine {
     # Prints a verse with its number, wrapping long text with a hanging
     # indent so continuation lines line up under the verse text, not the number.
     param([string]$Number, [string]$Text, [int]$Width)
 
-    $prefix = "{0,3}  " -f $Number
-    $indent = " " * $prefix.Length
-    $lines  = @(Get-BibleWrappedLines -Text $Text -PrefixLength $prefix.Length -Width $Width)
-
-    for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($i -eq 0) {
-            Write-Host $prefix -ForegroundColor Yellow -NoNewline
-        } else {
-            Write-Host $indent -NoNewline
-        }
-        Write-Host $lines[$i]
-    }
+    Write-BibleText -Text $Text -Prefix ("{0,3}  " -f $Number) -PrefixColor Yellow -Width $Width
 }
 
 function bible {
@@ -540,6 +626,11 @@ function bible {
 
     $index = 0
     $pageHistory = New-Object System.Collections.Generic.List[int]
+
+    # Where you were reading before each jump, so Backspace can return you to
+    # the exact chapter AND scroll position - not just the top of it.
+    $readingHistory = New-Object System.Collections.Generic.List[object]
+
     while ($true) {
         Clear-Host
         Write-Host "== $chapterRef ==" -ForegroundColor Cyan
@@ -596,6 +687,18 @@ function bible {
             }
             "ScrollUp" {
                 if ($index -gt 0) { $index-- }
+            }
+            "Back" {
+                if ($readingHistory.Count -gt 0) {
+                    $prev = $readingHistory[$readingHistory.Count - 1]
+                    $readingHistory.RemoveAt($readingHistory.Count - 1)
+                    $chapterRef = $prev.Ref
+                    $result     = $prev.Result
+                    $verses     = @($prev.Result.verses)
+                    $index      = $prev.Index
+                    $pageHistory.Clear()
+                    foreach ($h in @($prev.PageHistory)) { $pageHistory.Add($h) }
+                }
             }
             "Define" {
                 Write-Host ""
@@ -654,6 +757,13 @@ function bible {
                         # anything else is treated as a new "Book Chapter" reference to jump to
                         $newResult = Invoke-LsmApi -Reference $trimmed
                         if ($newResult -and $newResult.verses -and $newResult.verses.Count -gt 0) {
+                            # Remember where we were so Backspace can return.
+                            $readingHistory.Add([PSCustomObject]@{
+                                Ref         = $chapterRef
+                                Result      = $result
+                                Index       = $index
+                                PageHistory = @($pageHistory.ToArray())
+                            })
                             $result     = $newResult
                             $verses     = @($newResult.verses)
                             $chapterRef = $trimmed

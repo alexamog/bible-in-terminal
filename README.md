@@ -41,6 +41,7 @@ Single keypress, **no Enter needed**:
 | `Q` or `Esc` | Quit |
 | `Up` / `Down` arrow | Scroll one verse at a time (best in a small window) |
 | `?` | Look up a word - type it, press Enter, then any key to return to your place (clipboard untouched) |
+| `Backspace` | Go back to where you were reading before you jumped to another chapter |
 
 **Jumping to another chapter:** type the reference and press Enter, e.g.
 `John 4`.
@@ -55,10 +56,25 @@ those letters can't be typed directly. Press `/` first to open typing mode:
 Everything else (`John`, `Acts`, `Romans`, `Ephesians`...) types normally with
 no prefix.
 
+**Getting back after a jump:** press `Backspace`. You return to the chapter
+you came from *and* the exact scroll position you left, not the top of it.
+Jumps stack, so pressing it repeatedly walks back through everything you
+looked up. (While you're typing a reference, `Backspace` still deletes
+characters as usual - it only means "go back" when the line is empty.)
+
 Long verses wrap with a hanging indent so continuation lines line up under
 the verse text (not the number), with a blank line between verses. The page
 size adapts to your window's actual width and height, so it never overflows
 even in a small or narrow pane.
+
+**Supplied words show in italics.** The Recovery Version brackets words the
+translators added for English readability - `[He] [said,]`, `[a period of]`.
+Rather than printing the brackets, the tool renders those words in *italics*,
+matching how they appear in the printed edition. Clipboard copies keep the
+original bracket notation, so pasted text stays faithful to the source.
+
+If your terminal doesn't support italics the words simply appear normal -
+nothing breaks.
 
 Tip: this reader is much nicer in a **tall, narrow terminal pane** - split
 your terminal vertically before running `bible`.
