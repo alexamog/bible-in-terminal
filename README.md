@@ -35,16 +35,24 @@ Single keypress, **no Enter needed**:
 
 | Key | Does |
 |---|---|
-| `Space` or `PgDn` | Next page |
-| `PgUp` | Previous page |
+| `N` or `Space` or `PgDn` | Next page |
+| `P` or `PgUp` | Previous page |
+| `S` or `Tab` | Save a verse - labels the verses `a`, `b`, `c`... press one letter |
+| `Q` or `Esc` | Quit |
 | `Up` / `Down` arrow | Scroll one verse at a time (best in a small window) |
-| `Tab` | Save a verse - labels the verses `a`, `b`, `c`... press one letter |
-| `Esc` | Quit |
 
-Letters are deliberately *not* shortcuts, because book names start with them -
-so you can still type a reference like `John 4`, `Psalm 23`, or `Numbers 3`
-and press Enter to jump straight there. Typing `N`, `P`, `S`, or `Q` then
-Enter also still works.
+**Jumping to another chapter:** type the reference and press Enter, e.g.
+`John 4`.
+
+One catch: `N`, `P`, `S`, and `Q` now fire instantly, so a book starting with
+those letters can't be typed directly. Press `/` first to open typing mode:
+
+```
+/Psalm 23        /Numbers 3        /Samuel 1        /Song of Songs 2
+```
+
+Everything else (`John`, `Acts`, `Romans`, `Ephesians`...) types normally with
+no prefix.
 
 Long verses wrap with a hanging indent so continuation lines line up under
 the verse text (not the number), with a blank line between verses. The page

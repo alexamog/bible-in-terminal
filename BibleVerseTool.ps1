@@ -320,9 +320,6 @@ function Read-BibleInput {
             switch ($keyInfo.VirtualKeyCode) {
                 38 { if (-not $buffer) { return @{ Action = "ScrollUp" } } }   # Up arrow
                 40 { if (-not $buffer) { return @{ Action = "ScrollDown" } } } # Down arrow
-                # Instant, no-Enter keys. Deliberately NOT letters: book names
-                # start with N/P/S (Numbers, Psalm, Samuel...) so letter
-                # shortcuts would swallow a typed reference.
                 34 { if (-not $buffer) { return @{ Action = "Submit"; Text = "N" } } } # PageDown
                 33 { if (-not $buffer) { return @{ Action = "Submit"; Text = "P" } } } # PageUp
                 32 {
@@ -343,10 +340,26 @@ function Read-BibleInput {
                 }
                 default {
                     $ch = $keyInfo.Character
-                    if ($ch -and [int]$ch -ge 32 -and [int]$ch -ne 127) {
-                        $buffer += $ch
-                        Write-Host $ch -NoNewline
+                    if (-not $ch -or [int]$ch -lt 32 -or [int]$ch -eq 127) { break }
+
+                    # Nothing typed yet: N/P/S/Q fire instantly, no Enter.
+                    # Book names also start with N/P/S (Numbers, Psalm,
+                    # Samuel, Song of Songs), so "/" opens typing mode for
+                    # those. Any other letter just starts typing normally,
+                    # so "John 4" still works with no prefix.
+                    if (-not $buffer) {
+                        if ("$ch" -eq "/") {
+                            Write-Host "reference: " -NoNewline -ForegroundColor Green
+                            $buffer = " "   # non-empty marker: typing mode is on
+                            break
+                        }
+                        if ("$ch" -match '^[NnPpSsQq]$') {
+                            Write-Host ""
+                            return @{ Action = "Submit"; Text = "$ch" }
+                        }
                     }
+                    $buffer += $ch
+                    Write-Host $ch -NoNewline
                 }
             }
         }
@@ -466,8 +479,8 @@ function bible {
         $options += "[S]ave verse"
         $options += "[Q]uit"
         Write-Host ($options -join "   ") -ForegroundColor Green
-        Write-Host "No Enter needed:  Space/PgDn = next   PgUp = prev   Tab = save   Esc = quit   Up/Down = scroll one verse" -ForegroundColor DarkGray
-        Write-Host "Or type a reference and press Enter to jump there, e.g. John 4" -ForegroundColor DarkGray
+        Write-Host "One keypress, no Enter:  N/P = page   S = save   Q = quit   Up/Down = scroll   Space/PgDn/PgUp/Tab/Esc also work" -ForegroundColor DarkGray
+        Write-Host "Jump: type a reference + Enter (John 4).  Starts with N/P/S/Q? press / first, e.g. /Psalm 23" -ForegroundColor DarkGray
 
         Write-Host ">" -NoNewline -ForegroundColor Green
         Write-Host " " -NoNewline
