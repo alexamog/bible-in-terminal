@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # Bible lookup commands (Recovery Version text, api.lsm.org)
 #
 #   verse <reference>        e.g.  verse John 3:16
@@ -50,17 +50,27 @@ function Invoke-LsmApi {
     $authHeader = @{ Authorization = "Basic " + [Convert]::ToBase64String($authBytes) }
 
     try {
-        # Decode the response as UTF-8 explicitly. Invoke-RestMethod on Windows
-        # PowerShell 5.1 falls back to Latin-1 when the response has no charset,
-        # which mangles the (c) in the copyright attribution into "A(c)".
-        # -UseBasicParsing keeps 5.1 from invoking the Internet Explorer engine,
-        # which fails outright on machines where IE was never configured.
-        $response = Invoke-WebRequest -Uri $url -Headers $authHeader -TimeoutSec 15 -UseBasicParsing
-        $json     = [Text.Encoding]::UTF8.GetString($response.RawContentStream.ToArray())
-        return $json | ConvertFrom-Json
+        return Invoke-RestMethod -Uri $url -Headers $authHeader -TimeoutSec 15
     } catch {
         Write-Host "Request failed: $($_.Exception.Message)" -ForegroundColor Red
         return $null
+    }
+}
+
+function Read-BibleKey {
+    # Single keypress, no Enter needed. Returns a small object describing the
+    # key. Falls back to Read-Host (first character) if the console has no raw
+    # key support (e.g. redirected input, ISE).
+    try {
+        $k = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        return [PSCustomObject]@{
+            Char = $k.Character
+            Code = $k.VirtualKeyCode
+        }
+    } catch {
+        $line = Read-Host
+        $c = if ($line) { $line[0] } else { [char]13 }
+        return [PSCustomObject]@{ Char = $c; Code = 0 }
     }
 }
 
@@ -72,6 +82,13 @@ function verse {
 
     if (-not $Reference -or $Reference.Count -eq 0) {
         Write-Host "Usage: verse <reference>    e.g.  verse John 3:16" -ForegroundColor Yellow
+        Write-Host "       verse list                 browse your saved verses" -ForegroundColor Yellow
+        return
+    }
+
+    # "verse list" opens the saved-reference browser instead of a lookup.
+    if ($Reference.Count -eq 1 -and $Reference[0] -in @("list", "saved", "ls")) {
+        verselist
         return
     }
 
@@ -100,17 +117,70 @@ function verse {
     }
 }
 
+# Saved references live in a plain text file, one per line:
+#     Rom. 8:26|2026-07-21 08:17:49
+# Deliberately NOT JSON: PowerShell 5.1's ConvertTo-Json/ConvertFrom-Json
+# round-trip wraps arrays as {"value":[...],"Count":N} and re-nests the store
+# on every write. A line-based file has no such quirks and you can open and
+# edit it in Notepad.
+function Get-LsmStorePath {
+    # A function, not a $script: variable - scope resolution for $script: vars
+    # differs depending on whether the caller is the script or another
+    # function, which silently sent writes to the wrong place.
+    return (Join-Path $HOME ".lsm-saved-verses.txt")
+}
+
+function Get-LsmSavedRefs {
+    # One-time migration from the old .json store, if it is still around.
+    $legacy = Join-Path $HOME ".lsm-saved-verses.json"
+    if ((Test-Path $legacy) -and -not (Test-Path (Get-LsmStorePath))) {
+        $rescued = @()
+        # Pull every "ref": "..." out of the old file, however deeply the
+        # JSON bug nested it, and keep the first occurrence of each.
+        foreach ($m in [regex]::Matches((Get-Content $legacy -Raw), '"ref"\s*:\s*"([^"]+)"')) {
+            $r = $m.Groups[1].Value
+            if ($rescued -notcontains $r) { $rescued += $r }
+        }
+        if ($rescued.Count -gt 0) {
+            Set-Content -Path (Get-LsmStorePath) -Encoding utf8 -Value (
+                $rescued | ForEach-Object { "$_|(migrated)" }
+            )
+        }
+    }
+
+    if (-not (Test-Path (Get-LsmStorePath))) { return @() }
+
+    $out = @()
+    foreach ($line in (Get-Content (Get-LsmStorePath) -Encoding utf8)) {
+        if (-not $line -or -not $line.Trim()) { continue }
+        $parts = $line -split '\|', 2
+        $out += [PSCustomObject]@{
+            ref     = $parts[0].Trim()
+            savedAt = if ($parts.Count -gt 1) { $parts[1].Trim() } else { "" }
+        }
+    }
+    return @($out)
+}
+
+function Set-LsmSavedRefs {
+    param($Entries)
+
+    $lines = @()
+    foreach ($e in @($Entries)) { $lines += "$($e.ref)|$($e.savedAt)" }
+    if ($lines.Count -eq 0) {
+        Set-Content -Path (Get-LsmStorePath) -Value "" -Encoding utf8
+    } else {
+        Set-Content -Path (Get-LsmStorePath) -Value $lines -Encoding utf8
+    }
+}
+
 function Save-LsmVerse {
     # Stores only the reference, never the verse text - api.lsm.org's terms
     # of service prohibit storing any amount of the Recovery Version text for
-    # offline use. The text is re-fetched live every time savedverses runs.
+    # offline use. The text is re-fetched live every time it is displayed.
     param([string]$Reference)
 
-    $storePath = Join-Path $HOME ".lsm-saved-verses.json"
-    $saved = @()
-    if (Test-Path $storePath) {
-        try { $saved = @(Get-Content $storePath -Raw | ConvertFrom-Json) } catch { $saved = @() }
-    }
+    $saved = @(Get-LsmSavedRefs)
     if ($saved | Where-Object { $_.ref -eq $Reference }) {
         Write-Host "Already saved: $Reference" -ForegroundColor Yellow
         return
@@ -119,8 +189,91 @@ function Save-LsmVerse {
         ref     = $Reference
         savedAt = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
     }
-    $saved | ConvertTo-Json -Depth 5 | Set-Content -Path $storePath -Encoding utf8
+    Set-LsmSavedRefs -Entries $saved
     Write-Host "Saved $Reference" -ForegroundColor Green
+}
+
+function Remove-LsmSavedRef {
+    param([string]$Reference)
+
+    Set-LsmSavedRefs -Entries @(Get-LsmSavedRefs | Where-Object { $_.ref -ne $Reference })
+}
+
+function verselist {
+    # Browse saved references. Every action is ONE keypress - no Enter.
+    $pageSize = 9   # items labelled 1-9 so a single digit picks one
+    $index = 0
+
+    while ($true) {
+        $saved = @(Get-LsmSavedRefs)
+        if ($saved.Count -eq 0) {
+            Write-Host "No saved verses yet. Open a chapter with 'bible John 3' and press S." -ForegroundColor Yellow
+            return
+        }
+        if ($index -ge $saved.Count) { $index = [Math]::Max(0, $saved.Count - $pageSize) }
+
+        Clear-Host
+        Write-Host "== Saved verses ==" -ForegroundColor Cyan
+        Write-Host ""
+
+        $pageEnd = [Math]::Min($index + $pageSize, $saved.Count) - 1
+        for ($i = $index; $i -le $pageEnd; $i++) {
+            $label = $i - $index + 1
+            Write-Host ("  {0}) " -f $label) -ForegroundColor Yellow -NoNewline
+            Write-Host $saved[$i].ref -NoNewline
+            Write-Host ("   saved {0}" -f $saved[$i].savedAt) -ForegroundColor DarkGray
+        }
+
+        Write-Host ""
+        Write-Host ("{0}-{1} of {2}" -f ($index + 1), ($pageEnd + 1), $saved.Count) -ForegroundColor DarkGray
+        Write-Host ""
+
+        $hasNext = ($pageEnd + 1) -lt $saved.Count
+        $hasPrev = $index -gt 0
+        $opts = @("press 1-9 to read")
+        if ($hasNext) { $opts += "[N]ext" }
+        if ($hasPrev) { $opts += "[P]rev" }
+        $opts += "[D]elete"
+        $opts += "[Q]uit"
+        Write-Host ($opts -join "   ") -ForegroundColor Green
+
+        $key = Read-BibleKey
+        $ch  = "$($key.Char)".ToUpper()
+
+        if ($key.Code -eq 40 -and $hasNext) { $index += $pageSize; continue }   # Down arrow
+        if ($key.Code -eq 38 -and $hasPrev) { $index -= $pageSize; continue }   # Up arrow
+
+        switch ($ch) {
+            "N" { if ($hasNext) { $index += $pageSize } }
+            "P" { if ($hasPrev) { $index = [Math]::Max(0, $index - $pageSize) } }
+            "Q" { return }
+            "D" {
+                Write-Host ""
+                Write-Host "Press number to DELETE (any other key cancels):" -ForegroundColor Red
+                $dk = Read-BibleKey
+                if ("$($dk.Char)" -match '^[1-9]$') {
+                    $pick = $index + [int]"$($dk.Char)" - 1
+                    if ($pick -le $pageEnd) {
+                        Remove-LsmSavedRef -Reference $saved[$pick].ref
+                        Write-Host "Deleted $($saved[$pick].ref)" -ForegroundColor Green
+                        Start-Sleep -Milliseconds 600
+                    }
+                }
+            }
+            default {
+                if ($ch -match '^[1-9]$') {
+                    $pick = $index + [int]$ch - 1
+                    if ($pick -le $pageEnd) {
+                        Clear-Host
+                        verse $saved[$pick].ref
+                        Write-Host ""
+                        Write-Host "Press any key to go back to the list..." -ForegroundColor Green
+                        Read-BibleKey | Out-Null
+                    }
+                }
+            }
+        }
+    }
 }
 
 function savedverses {
@@ -167,6 +320,20 @@ function Read-BibleInput {
             switch ($keyInfo.VirtualKeyCode) {
                 38 { if (-not $buffer) { return @{ Action = "ScrollUp" } } }   # Up arrow
                 40 { if (-not $buffer) { return @{ Action = "ScrollDown" } } } # Down arrow
+                # Instant, no-Enter keys. Deliberately NOT letters: book names
+                # start with N/P/S (Numbers, Psalm, Samuel...) so letter
+                # shortcuts would swallow a typed reference.
+                34 { if (-not $buffer) { return @{ Action = "Submit"; Text = "N" } } } # PageDown
+                33 { if (-not $buffer) { return @{ Action = "Submit"; Text = "P" } } } # PageUp
+                32 {
+                    # Space pages forward only when nothing typed yet;
+                    # otherwise it is a real space inside "John 4".
+                    if (-not $buffer) { return @{ Action = "Submit"; Text = "N" } }
+                    $buffer += " "
+                    Write-Host " " -NoNewline
+                }
+                9  { if (-not $buffer) { return @{ Action = "Submit"; Text = "S" } } } # Tab
+                27 { return @{ Action = "Submit"; Text = "Q" } }                       # Esc
                 13 { Write-Host ""; return @{ Action = "Submit"; Text = $buffer } } # Enter
                 8  {
                     if ($buffer.Length -gt 0) {
@@ -268,7 +435,7 @@ function bible {
             $termWidth  = 80
             $termHeight = 25
         }
-        $availableLines = [Math]::Max(3, $termHeight - 9)
+        $availableLines = [Math]::Max(3, $termHeight - 10)
 
         # Figure out how many verses fit, counting wrapped lines + a spacer
         # line per verse, so a page never overflows a small/narrow window.
@@ -299,7 +466,8 @@ function bible {
         $options += "[S]ave verse"
         $options += "[Q]uit"
         Write-Host ($options -join "   ") -ForegroundColor Green
-        Write-Host "Up/Down arrow = scroll one verse   |   type another reference to jump there, e.g. John 4" -ForegroundColor DarkGray
+        Write-Host "No Enter needed:  Space/PgDn = next   PgUp = prev   Tab = save   Esc = quit   Up/Down = scroll one verse" -ForegroundColor DarkGray
+        Write-Host "Or type a reference and press Enter to jump there, e.g. John 4" -ForegroundColor DarkGray
 
         Write-Host ">" -NoNewline -ForegroundColor Green
         Write-Host " " -NoNewline
@@ -330,14 +498,23 @@ function bible {
                         }
                     }
                     "S" {
-                        $verseNum = Read-Host "Enter verse number to save"
-                        $match = $verses | Where-Object { $_.ref -match ":$verseNum(-\d+)?$" } | Select-Object -First 1
-                        if ($match) {
-                            Save-LsmVerse -Reference $match.ref
-                        } else {
-                            Write-Host "Verse $verseNum not found on this chapter." -ForegroundColor Red
+                        # One keypress picks a verse: label the verses on this
+                        # page a, b, c... so no typing (and no multi-digit
+                        # verse numbers) is needed.
+                        $letters = [char[]]"abcdefghijklmnopqrstuvwxyz"
+                        Write-Host ""
+                        for ($i = $index; $i -le $pageEnd; $i++) {
+                            $li = $i - $index
+                            if ($li -ge $letters.Count) { break }
+                            Write-Host ("  {0}) {1}" -f $letters[$li], $verses[$i].ref) -ForegroundColor Yellow
                         }
-                        Read-Host "Press Enter to continue" | Out-Null
+                        Write-Host "Press a letter to save (any other key cancels):" -ForegroundColor Green
+                        $pk = "$((Read-BibleKey).Char)".ToLower()
+                        $li = [Array]::IndexOf($letters, [char]$pk)
+                        if ($li -ge 0 -and ($index + $li) -le $pageEnd) {
+                            Save-LsmVerse -Reference $verses[$index + $li].ref
+                            Start-Sleep -Milliseconds 700
+                        }
                     }
                     "Q" {
                         return
@@ -364,3 +541,4 @@ function bible {
         }
     }
 }
+

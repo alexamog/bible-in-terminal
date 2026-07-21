@@ -19,7 +19,8 @@ free.
 |---|---|
 | `verse John 3:16` | Prints the verse(s) and **copies the text to your clipboard**. |
 | `bible John 3` | Opens a full-chapter reader, one screen-page at a time, sized to your terminal window. |
-| `savedverses` | Lists every verse you've saved from the chapter reader. |
+| `verse list` | Browse your saved verses. Press a number to read one - no Enter needed. |
+| `savedverses` | Prints every saved verse in one go (non-interactive). |
 
 ### The chapter reader (`bible`)
 
@@ -30,16 +31,20 @@ verses with:
 [N]ext page   [P]revious page   [S]ave verse   [Q]uit
 ```
 
-- **N** / **P** move forward/back a whole page.
-- **Up / Down arrow keys** scroll one verse at a time, immediately - no need
-  to press Enter. This is the one to use when your terminal window is small
-  and a full page jump feels too coarse.
-- **S** asks for a verse number and saves that *reference* (e.g. "John 3:16")
-  to `%USERPROFILE%\.lsm-saved-verses.json`. Run `savedverses` anytime to
-  fetch and display the text for everything you've saved.
-- **Q** exits back to your normal prompt.
-- Typing anything else and pressing Enter jumps straight to that chapter
-  (e.g. type `John 4` and hit Enter).
+Single keypress, **no Enter needed**:
+
+| Key | Does |
+|---|---|
+| `Space` or `PgDn` | Next page |
+| `PgUp` | Previous page |
+| `Up` / `Down` arrow | Scroll one verse at a time (best in a small window) |
+| `Tab` | Save a verse - labels the verses `a`, `b`, `c`... press one letter |
+| `Esc` | Quit |
+
+Letters are deliberately *not* shortcuts, because book names start with them -
+so you can still type a reference like `John 4`, `Psalm 23`, or `Numbers 3`
+and press Enter to jump straight there. Typing `N`, `P`, `S`, or `Q` then
+Enter also still works.
 
 Long verses wrap with a hanging indent so continuation lines line up under
 the verse text (not the number), with a blank line between verses. The page
@@ -48,6 +53,21 @@ even in a small or narrow pane.
 
 Tip: this reader is much nicer in a **tall, narrow terminal pane** - split
 your terminal vertically before running `bible`.
+
+### Your saved verses (`verse list`)
+
+`verse list` opens a numbered list of everything you've saved:
+
+```
+  1) Rom. 8:26    saved 2026-07-21 08:17:49
+  2) John 3:16    saved 2026-07-21 09:20:02
+
+press 1-9 to read   [N]ext   [D]elete   [Q]uit
+```
+
+Press a **number** to pull that verse from the API and read it (it also lands
+on your clipboard). Press **D** then a number to delete one. **Q** goes back.
+All single keypresses - no Enter.
 
 ## Install
 
@@ -88,7 +108,7 @@ your terminal vertically before running `bible`.
 | File | Purpose |
 |---|---|
 | `%USERPROFILE%\.lsm-verse.json` | Your API credentials. **Never share this file or commit it anywhere.** |
-| `%USERPROFILE%\.lsm-saved-verses.json` | References (not verse text) you've saved with the `[S]ave` option. Plain JSON, safe to open and edit by hand. |
+| `%USERPROFILE%\.lsm-saved-verses.txt` | References (not verse text) you've saved. One per line as `Reference\|timestamp` - open it in Notepad and edit freely. An older `.json` store is migrated automatically the first time you run the tool. |
 
 ## A note on the API's terms of service
 
