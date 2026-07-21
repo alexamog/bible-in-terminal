@@ -40,6 +40,7 @@ Single keypress, **no Enter needed**:
 | `S` or `Tab` | Save a verse - labels the verses `a`, `b`, `c`... press one letter |
 | `Q` or `Esc` | Quit |
 | `Up` / `Down` arrow | Scroll one verse at a time (best in a small window) |
+| `?` | Look up a word - type it, press Enter, then any key to return to your place (clipboard untouched) |
 
 **Jumping to another chapter:** type the reference and press Enter, e.g.
 `John 4`.
@@ -118,8 +119,41 @@ All single keypresses - no Enter.
 | `%USERPROFILE%\.lsm-verse.json` | Your API credentials. **Never share this file or commit it anywhere.** |
 | `%USERPROFILE%\.lsm-saved-verses.txt` | References (not verse text) you've saved. One per line as `Reference\|timestamp` - open it in Notepad and edit freely. An older `.json` store is migrated automatically the first time you run the tool. |
 
+### Looking up words (`?` while reading)
+
+Word lookup is **only available inside the chapter reader** - there's no
+standalone command. While reading, press `?`, type the word, press Enter:
+
+```
+bible John 15
+  ... press ?
+define: abide
+```
+
+Shows pronunciation, each part of speech with up to three definitions,
+examples, and synonyms. Press any key to return to exactly where you were in
+the chapter.
+
+Lookups deliberately **don't** touch your clipboard, so checking a word
+mid-chapter won't wipe a verse you copied with `verse`.
+
+Unknown words report `No dictionary entry for '...'` rather than erroring.
+
+Note this is general modern English (Wiktionary), not a biblical lexicon -
+`abide` gives you "endure, tolerate, dwell", not the Greek sense behind
+John 15. For that you want a lexicon or interlinear instead.
+
 ## A note on the API's terms of service
 
+Two APIs are involved, with different rules.
+
+**Dictionary (`?` in the reader)** - api.dictionaryapi.dev is free and needs no key. Its
+data comes from Wiktionary under **CC BY-SA 3.0**, so the tool always prints
+the source link and licence with each definition. It's community-run with no
+uptime guarantee or documented rate limit - fine for personal use, don't
+build anything critical on it.
+
+**Bible text (`verse` / `bible`)** -
 api.lsm.org's terms prohibit storing the Recovery Version text offline, and
 require the `copyright` attribution to be shown wherever verses are
 displayed. This tool follows both: `savedverses` only ever stores the

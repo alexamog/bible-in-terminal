@@ -2,14 +2,20 @@
 # Bible lookup commands (Recovery Version text, api.lsm.org)
 #
 #   verse <reference>        e.g.  verse John 3:16
+#   verse list               browse your saved references
 #   bible <book> <chapter>   e.g.  bible John 3        (paged chapter reader)
-#   savedverses              list verses you've saved from the chapter reader
+#
+# Word lookup lives INSIDE the chapter reader only: press ? while reading.
+#   savedverses              print every saved verse in one go
 #
 # Credentials live in:  %USERPROFILE%\.lsm-verse.json
 #   { "appid": "YOUR_APPID", "token": "YOUR_TOKEN" }
 # Register at https://api.lsm.org to get an appid + token.
 #
-# Saved verses are stored in: %USERPROFILE%\.lsm-saved-verses.json
+# Saved references are stored in: %USERPROFILE%\.lsm-saved-verses.txt
+#
+# "define" uses api.dictionaryapi.dev - free, no key needed. Its data comes
+# from Wiktionary under CC BY-SA 3.0, so the source link is always shown.
 # ============================================================
 
 function Get-LsmCredential {
@@ -55,6 +61,101 @@ function Invoke-LsmApi {
         Write-Host "Request failed: $($_.Exception.Message)" -ForegroundColor Red
         return $null
     }
+}
+
+function Invoke-DictApi {
+    # api.dictionaryapi.dev - no key, no account. Returns $null when the word
+    # is not found (the API answers 404 for that, which is not an error worth
+    # shouting about).
+    param([Parameter(Mandatory)][string]$Word)
+
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $url = "https://api.dictionaryapi.dev/api/v2/entries/en/{0}" -f [uri]::EscapeDataString($Word)
+
+    try {
+        return Invoke-RestMethod -Uri $url -TimeoutSec 15
+    } catch {
+        $status = $null
+        if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
+        if ($status -eq 404) {
+            Write-Host "No dictionary entry for '$Word'." -ForegroundColor Yellow
+        } else {
+            Write-Host "Lookup failed: $($_.Exception.Message)" -ForegroundColor Red
+        }
+        return $null
+    }
+}
+
+function Show-Definition {
+    # Prints one dictionary entry, wrapped to the window with a hanging indent
+    # so long definitions stay readable in a narrow pane.
+    param($Entry, [int]$Width)
+
+    if ($Width -le 0) {
+        try { $Width = $Host.UI.RawUI.WindowSize.Width } catch { $Width = 80 }
+    }
+
+    Write-Host ""
+    Write-Host $Entry.word -ForegroundColor Cyan -NoNewline
+    if ($Entry.phonetic) { Write-Host "  $($Entry.phonetic)" -ForegroundColor DarkGray } else { Write-Host "" }
+
+    foreach ($meaning in $Entry.meanings) {
+        Write-Host ""
+        Write-Host "  $($meaning.partOfSpeech)" -ForegroundColor Yellow
+
+        $n = 1
+        foreach ($d in @($meaning.definitions | Select-Object -First 3)) {
+            $prefix = "    {0}. " -f $n
+            $indent = " " * $prefix.Length
+            $lines  = @(Get-BibleWrappedLines -Text $d.definition -PrefixLength $prefix.Length -Width $Width)
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($i -eq 0) { Write-Host $prefix -NoNewline } else { Write-Host $indent -NoNewline }
+                Write-Host $lines[$i]
+            }
+            if ($d.example) {
+                $exLines = @(Get-BibleWrappedLines -Text "e.g. $($d.example)" -PrefixLength ($indent.Length + 2) -Width $Width)
+                foreach ($ex in $exLines) {
+                    Write-Host ("$indent  " + $ex) -ForegroundColor DarkGray
+                }
+            }
+            $n++
+        }
+
+        if ($meaning.synonyms) {
+            $syn = (@($meaning.synonyms) | Select-Object -First 6) -join ", "
+            foreach ($sl in @(Get-BibleWrappedLines -Text "synonyms: $syn" -PrefixLength 4 -Width $Width)) {
+                Write-Host ("    " + $sl) -ForegroundColor DarkGray
+            }
+        }
+    }
+
+    # CC BY-SA 3.0 requires crediting the source.
+    if ($Entry.sourceUrls) {
+        Write-Host ""
+        Write-Host ("Source: {0}  ({1})" -f (@($Entry.sourceUrls)[0], $Entry.license.name)) -ForegroundColor DarkGray
+    }
+}
+
+function Show-LsmWordLookup {
+    # Internal helper for the chapter reader's "?" key. There is deliberately
+    # no top-level "def"/"dict" command - word lookup is only offered while
+    # reading a chapter.
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Word
+    )
+
+    if (-not $Word -or $Word.Count -eq 0) { return }
+
+    $term = ($Word -join " ").Trim()
+    $result = Invoke-DictApi -Word $term
+    if (-not $result) { return }
+
+    $entry = @($result)[0]
+    Show-Definition -Entry $entry -Width 0
+
+    # Deliberately no clipboard copy here - pressing ? mid-chapter should not
+    # clobber whatever verse you copied with "verse".
 }
 
 function Read-BibleKey {
@@ -353,6 +454,9 @@ function Read-BibleInput {
                             $buffer = " "   # non-empty marker: typing mode is on
                             break
                         }
+                        if ("$ch" -eq "?") {
+                            return @{ Action = "Define" }
+                        }
                         if ("$ch" -match '^[NnPpSsQq]$') {
                             Write-Host ""
                             return @{ Action = "Submit"; Text = "$ch" }
@@ -448,7 +552,7 @@ function bible {
             $termWidth  = 80
             $termHeight = 25
         }
-        $availableLines = [Math]::Max(3, $termHeight - 10)
+        $availableLines = [Math]::Max(3, $termHeight - 8)
 
         # Figure out how many verses fit, counting wrapped lines + a spacer
         # line per verse, so a page never overflows a small/narrow window.
@@ -479,8 +583,8 @@ function bible {
         $options += "[S]ave verse"
         $options += "[Q]uit"
         Write-Host ($options -join "   ") -ForegroundColor Green
-        Write-Host "One keypress, no Enter:  N/P = page   S = save   Q = quit   Up/Down = scroll   Space/PgDn/PgUp/Tab/Esc also work" -ForegroundColor DarkGray
-        Write-Host "Jump: type a reference + Enter (John 4).  Starts with N/P/S/Q? press / first, e.g. /Psalm 23" -ForegroundColor DarkGray
+        # Full key list lives in README.md, not on screen - it ate two lines
+        # of reading space on every page.
 
         Write-Host ">" -NoNewline -ForegroundColor Green
         Write-Host " " -NoNewline
@@ -492,6 +596,17 @@ function bible {
             }
             "ScrollUp" {
                 if ($index -gt 0) { $index-- }
+            }
+            "Define" {
+                Write-Host ""
+                $word = Read-Host "define"
+                if ($word -and $word.Trim()) {
+                    Clear-Host
+                    Show-LsmWordLookup $word.Trim()
+                    Write-Host ""
+                    Write-Host "Press any key to go back to the chapter..." -ForegroundColor Green
+                    Read-BibleKey | Out-Null
+                }
             }
             "Submit" {
                 $trimmed = $input.Text.Trim()
